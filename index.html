@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#087f8c">
+  <title>Hima.Net | ماسح كروت الإنترنت</title>
+  <style>
+    :root { color-scheme: light; --teal:#087f8c; --ink:#18323a; --muted:#62777d; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:20px;
+      font-family:Tahoma,Arial,sans-serif; background:linear-gradient(145deg,#e8f7f7,#f6fbff); color:var(--ink); }
+    main { width:min(100%,460px); background:white; border-radius:22px; padding:24px;
+      box-shadow:0 12px 40px #173c4817; text-align:center; }
+    .logo { width:58px;height:58px;border-radius:18px;display:grid;place-items:center;margin:0 auto 12px;
+      color:white;background:var(--teal);font-size:28px;font-weight:bold; }
+    h1 { margin:8px 0; font-size:24px; }
+    p { color:var(--muted); line-height:1.8; font-size:14px; }
+    video { display:block; width:100%; max-height:55vh; object-fit:cover; border-radius:16px;
+      background:#10242a; margin:16px 0; }
+    button { border:0; border-radius:12px; padding:13px 18px; width:100%; font:inherit; font-weight:bold;
+      cursor:pointer; background:var(--teal); color:white; }
+    button:disabled { opacity:.55; cursor:wait; }
+    .secondary { margin-top:10px; background:#eaf3f4; color:var(--ink); }
+    #status { min-height:24px; font-weight:bold; color:var(--teal); overflow-wrap:anywhere; }
+    .small { font-size:12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo">H</div>
+    <h1>ماسح كروت Hima.Net</h1>
+    <p>اضغط «تشغيل الكاميرا» ووجّه الكاميرا إلى رمز QR الموجود على كارت الإنترنت. عند قراءة الرمز سنفتح رابط الكارت تلقائيًا.</p>
+    <video id="video" playsinline muted aria-label="عرض الكاميرا"></video>
+    <button id="start">تشغيل الكاميرا</button>
+    <button id="stop" class="secondary" disabled>إيقاف الكاميرا</button>
+    <p id="status" role="status">الكاميرا لم تبدأ بعد.</p>
+    <p class="small">إذا لم تعمل الكاميرا، افتح الصفحة عبر HTTPS واسمح باستخدام الكاميرا من إعدادات المتصفح.</p>
+  </main>
+  <canvas id="canvas" hidden></canvas>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script>
+  (() => {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const start = document.getElementById('start');
+    const stop = document.getElementById('stop');
+    const status = document.getElementById('status');
+    let stream = null, raf = 0, busy = false;
+
+    function stopCamera(message) {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      stream = null;
+      video.srcObject = null;
+      start.disabled = false;
+      stop.disabled = true;
+      if (message) status.textContent = message;
+    }
+
+    function targetFromQR(raw) {
+      const value = String(raw || '').trim();
+      // If the QR contains a URL, use that exact URL (e.g. the card's login link).
+      if (/^https?:\/\//i.test(value)) {
+        const url = new URL(value);
+        if (url.hostname !== '10.0.0.1') {
+          throw new Error('الرابط داخل QR ليس رابط بوابة Hima.Net المتوقعة.');
+        }
+        return url.href;
+      }
+      // If the QR contains only a card number, pass it to the known router URL.
+      if (/^[A-Za-z0-9_-]{4,64}$/.test(value)) {
+        const url = new URL('http://10.0.0.1/login');
+        url.searchParams.set('card', value);
+        return url.href;
+      }
+      throw new Error('لم أتعرف على محتوى QR. تأكد أنه رابط الكارت أو رقم الكارت فقط.');
+    }
+
+    function scanFrame() {
+      if (!stream || busy) return;
+      if (video.readyState >= video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = window.jsQR && window.jsQR(image.data, image.width, image.height, {
+          inversionAttempts: 'attemptBoth'
+        });
+        if (code && code.data) {
+          busy = true;
+          try {
+            const target = targetFromQR(code.data);
+            status.textContent = 'تمت قراءة الكارت، جارٍ فتح رابط التفعيل…';
+            stopCamera();
+            window.location.assign(target);
+            return;
+          } catch (err) {
+            busy = false;
+            status.textContent = err.message || 'تعذرت قراءة الرمز.';
+          }
+        }
+      }
+      raf = requestAnimationFrame(scanFrame);
+    }
+
+    start.addEventListener('click', async () => {
+      if (!window.jsQR) {
+        status.textContent = 'تعذر تحميل مكتبة قراءة QR. تحقق من اتصال الإنترنت ثم أعد المحاولة.';
+        return;
+      }
+      try {
+        start.disabled = true;
+        status.textContent = 'جارٍ طلب إذن الكاميرا…';
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: 'environment' } }
+        });
+        video.srcObject = stream;
+        await video.play();
+        stop.disabled = false;
+        status.textContent = 'وجّه الكاميرا إلى QR وثبّتها لحظة.';
+        raf = requestAnimationFrame(scanFrame);
+      } catch (err) {
+        stopCamera('لم أستطع فتح الكاميرا. اسمح للمتصفح باستخدامها وتأكد أنك تستخدم HTTPS.');
+      }
+    });
+    stop.addEventListener('click', () => stopCamera('تم إيقاف الكاميرا.'));
+    window.addEventListener('pagehide', () => stopCamera());
+  })();
+  </script>
+</body>
+</html>
