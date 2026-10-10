@@ -201,6 +201,8 @@
         '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(here) + ';end';
       document.getElementById('cna').hidden = false;
     }
+    // لو اتفتحت من زر "اشحن الكارت QR" فى صفحة الدخول: شغّل الكاميرا مباشرة (المتصفح بيطلب الإذن مرة واحدة)
+    if (location.hash === '#auto') setTimeout(() => startBtn.click(), 400);
   </script>
 </body>
 </html>
