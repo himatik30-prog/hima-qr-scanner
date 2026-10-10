@@ -33,6 +33,9 @@
     .card-num { font-size:34px; font-weight:bold; letter-spacing:2px; direction:ltr; color:var(--ok); margin:4px 0; }
     .go { display:block; margin-top:10px; padding:13px; border-radius:12px; background:var(--ok); color:white;
       font-weight:bold; text-decoration:none; }
+    .warn { margin-top:14px; padding:14px; border-radius:14px; background:#fff6e5; border:1px solid #f0d49a; color:#6b4a00; font-size:13px; line-height:1.9; text-align:right; }
+    .warn[hidden] { display:none; }
+    .warn input { width:100%; padding:10px; margin-top:6px; border:1px solid #d8c18a; border-radius:8px; font:inherit; font-size:12px; direction:ltr; }
   </style>
 </head>
 <body>
@@ -40,6 +43,14 @@
     <div class="logo">H</div>
     <h1>ماسح كروت Hima.Net</h1>
     <p>امسح الـ QR المطبوع على الكارت، وبعدها هتتحول لصفحة الشحن تلقائياً.</p>
+
+    <div id="cna" class="warn" hidden>
+      <strong>الصفحة مفتوحة داخل نافذة «تسجيل الدخول للشبكة»</strong>، والنافذة دي بتمنع الكاميرا واختيار الصور.<br>
+      افتحها في Chrome: من القائمة ⋮ اختر <b>«فتح في المتصفح»</b>، أو اضغط الزر:
+      <a class="go" id="openChrome" href="#">فتح في Chrome</a>
+      لو الزر ما اشتغلش، انسخ الرابط وافتحه في Chrome:
+      <input id="pageUrl" readonly onclick="this.select()">
+    </div>
 
     <video id="video" playsinline muted></video>
     <button id="start">تشغيل الكاميرا</button>
@@ -181,6 +192,14 @@
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       say('الكاميرا الحية مش متاحة هنا. استخدم "تصوير الكارت بالكاميرا".', true);
+    }
+    // لو الصفحة مفتوحة جوه نافذة "تسجيل الدخول للشبكة" (WebView) الكاميرا واختيار الصور مش بيشتغلوا
+    if (/;\s*wv\)/.test(navigator.userAgent)) {
+      const here = location.origin + location.pathname;
+      document.getElementById('pageUrl').value = here;
+      document.getElementById('openChrome').href = 'intent://' + location.host + location.pathname +
+        '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(here) + ';end';
+      document.getElementById('cna').hidden = false;
     }
   </script>
 </body>
