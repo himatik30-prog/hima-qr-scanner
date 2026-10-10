@@ -3,10 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#087f8c">
-  <title>Hima.Net | ماسح كروت الإنترنت</title>
+  <title>ماسح كروت Hima.Net</title>
   <style>
-    :root { color-scheme: light; --teal:#087f8c; --ink:#18323a; --muted:#62777d; }
+    :root { color-scheme: light; --teal:#087f8c; --ink:#18323a; --muted:#62777d; --ok:#1b8a3a; }
     * { box-sizing: border-box; }
     body { margin:0; min-height:100vh; display:grid; place-items:center; padding:20px;
       font-family:Tahoma,Arial,sans-serif; background:linear-gradient(145deg,#e8f7f7,#f6fbff); color:var(--ink); }
@@ -25,173 +24,164 @@
     .upload-box { margin-top:18px; padding:14px; border:1px dashed #9db9bd; border-radius:14px; }
     .upload-box p { margin:5px 0 10px; }
     .file-label { display:block; border-radius:12px; padding:12px; background:#eaf3f4; color:var(--ink); font-weight:bold; cursor:pointer; }
-    #imageFile { display:block; width:100%; margin-top:10px; font:inherit; font-size:13px; }
+    .file-label + .file-label { margin-top:8px; }
     #status { min-height:24px; font-weight:bold; color:var(--teal); overflow-wrap:anywhere; }
+    #status.err { color:#b3261e; }
     .small { font-size:12px; }
+    #result { margin-top:16px; padding:16px; border-radius:16px; background:#eef8f0; border:1px solid #bfe3c8; }
+    #result[hidden] { display:none; }
+    .card-num { font-size:34px; font-weight:bold; letter-spacing:2px; direction:ltr; color:var(--ok); margin:4px 0; }
+    .go { display:block; margin-top:10px; padding:13px; border-radius:12px; background:var(--ok); color:white;
+      font-weight:bold; text-decoration:none; }
   </style>
 </head>
 <body>
   <main>
     <div class="logo">H</div>
     <h1>ماسح كروت Hima.Net</h1>
-    <p>اضغط «تشغيل الكاميرا» ووجّه الكاميرا إلى رمز QR الموجود على كارت الإنترنت. عند قراءة الرمز سنفتح رابط الكارت تلقائيًا.</p>
-    <video id="video" playsinline muted aria-label="عرض الكاميرا"></video>
+    <p>امسح الـ QR المطبوع على الكارت، وبعدها هتتحول لصفحة الشحن تلقائياً.</p>
+
+    <video id="video" playsinline muted></video>
     <button id="start">تشغيل الكاميرا</button>
     <button id="stop" class="secondary" disabled>إيقاف الكاميرا</button>
+
     <div class="upload-box">
-      <p><strong>أو امسح QR من صورة محفوظة على الجهاز</strong></p>
-      <label class="file-label" for="imageFile">اختيار صورة الكارت</label>
-      <input id="imageFile" type="file" accept="image/*">
-      <p class="small">اختَر صورة من واتساب أو من ملفات الكمبيوتر. ستتم قراءة الرمز من الصورة دون تشغيل الكاميرا.</p>
+      <p><strong>لو الكاميرا الحية ما اشتغلتش:</strong> صوّر الكارت أو اختر صورة له.</p>
+      <label class="file-label" for="imgShot">📷 تصوير الكارت بالكاميرا</label>
+      <input id="imgShot" type="file" accept="image/*" capture="environment" hidden>
+      <label class="file-label" for="imageFile">🖼️ اختيار صورة من الجهاز</label>
+      <input id="imageFile" type="file" accept="image/*" hidden>
     </div>
-    <p id="status" role="status">الكاميرا لم تبدأ بعد.</p>
-    <p class="small">إذا لم تعمل الكاميرا، افتح الصفحة عبر HTTPS واسمح باستخدام الكاميرا من إعدادات المتصفح.</p>
+
+    <div id="result" hidden>
+      <p style="margin:0">رقم الكارت</p>
+      <div class="card-num" id="num"></div>
+      <p style="margin:4px 0">جارٍ فتح صفحة الشحن…</p>
+      <a class="go" id="go" href="#">افتح صفحة الشحن الآن</a>
+      <p class="small">لو الصفحة ما فتحتش: اقفل بيانات الجوال (الداتا) وخلّي واي فاي هيما نت شغّال، وبعدها اضغط الزر.</p>
+    </div>
+
+    <p id="status" role="status"></p>
   </main>
   <canvas id="canvas" hidden></canvas>
-  <script src="./jsQR.js"></script>
+
+  <!-- قارئ QR محلي (jsQR 1.4.0 - Apache-2.0) من نفس الموقع: مفيش اعتماد على أي دومين تاني -->
+  <script src="jsQR.js"></script>
   <script>
-  (() => {
+    const ROUTER = '10.0.0.1';
+    const CARD_RE = /^[A-Za-z0-9_-]{4,32}$/;         // نفس الشرط اللي بتقبله صفحة الدخول (4 إلى 32)
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const start = document.getElementById('start');
-    const stop = document.getElementById('stop');
-    const imageFile = document.getElementById('imageFile');
-    const status = document.getElementById('status');
-    let stream = null, raf = 0, busy = false;
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    let stream = null, scanning = false, done = false;
 
-    function stopCamera(message) {
-      if (raf) cancelAnimationFrame(raf);
-      raf = 0;
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      stream = null;
-      video.srcObject = null;
-      start.disabled = false;
-      stop.disabled = true;
-      if (message) status.textContent = message;
-    }
+    function say(t, err) { statusEl.textContent = t; statusEl.className = err ? 'err' : ''; }
 
+    // يرجّع رقم الكارت ورابط الشحن، أو يرمي خطأ لو المحتوى مش كارت هيما نت
     function targetFromQR(raw) {
-      const value = String(raw || '').trim();
-      // If the QR contains a URL, use that exact URL (e.g. the card's login link).
-      if (/^https?:\/\//i.test(value)) {
-        const url = new URL(value);
-        if (url.hostname !== '10.0.0.1') {
-          throw new Error('الرابط داخل QR ليس رابط بوابة Hima.Net المتوقعة.');
+      const v = String(raw || '').trim();
+      let card = v;
+      if (/^https?:\/\//i.test(v)) {
+        let u;
+        try { u = new URL(v); } catch (e) { throw new Error('الرابط داخل الـ QR غير صالح.'); }
+        const okPath = u.pathname.replace(/\/+$/, '') === '/login';
+        if (u.protocol !== 'http:' || u.hostname !== ROUTER || u.port !== '' || !okPath) {
+          throw new Error('الـ QR ده مش كارت شحن تابع لشبكة هيما نت.');
         }
-        return url.href;
+        card = u.searchParams.get('card') || '';
       }
-      // If the QR contains only a card number, pass it to the known router URL.
-      if (/^[A-Za-z0-9_-]{4,64}$/.test(value)) {
-        const url = new URL('http://10.0.0.1/login');
-        url.searchParams.set('card', value);
-        return url.href;
-      }
-      throw new Error('لم أتعرف على محتوى QR. تأكد أنه رابط الكارت أو رقم الكارت فقط.');
+      if (!CARD_RE.test(card)) throw new Error('محتوى الـ QR مش رقم كارت صالح.');
+      // الرابط بيتبني من الرقم بعد التحقق، ومش بنمرّر أي باراميتر تاني
+      return { card, url: 'http://' + ROUTER + '/login?card=' + encodeURIComponent(card) };
     }
 
-    function decodeImageFile(file) {
-      if (!file || !file.type.startsWith('image/')) {
-        status.textContent = 'اختَر ملف صورة صالحًا.';
-        return;
-      }
-      if (!window.jsQR) {
-        status.textContent = 'تعذر تحميل مكتبة قراءة QR. تحقق من اتصال الإنترنت ثم أعد المحاولة.';
-        return;
-      }
-      status.textContent = 'جارٍ فحص الصورة…';
-      const img = new Image();
-      const objectUrl = URL.createObjectURL(file);
-      img.onload = () => {
-        try {
-          const scale = Math.min(1, 1800 / Math.max(img.naturalWidth, img.naturalHeight));
-          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = window.jsQR(image.data, image.width, image.height, {
-            inversionAttempts: 'attemptBoth'
-          });
-          URL.revokeObjectURL(objectUrl);
-          if (!code || !code.data) {
-            status.textContent = 'لم أجد QR واضحًا في الصورة. جرّب صورة أوضح يظهر فيها الرمز كاملًا.';
-            return;
-          }
-          try {
-            const target = targetFromQR(code.data);
-            status.textContent = 'تمت قراءة QR من الصورة، جارٍ فتح رابط الكارت…';
-            window.location.assign(target);
-          } catch (err) {
-            status.textContent = err.message || 'تم العثور على رمز، لكن محتواه غير مدعوم.';
-          }
-        } catch (err) {
-          URL.revokeObjectURL(objectUrl);
-          status.textContent = 'تعذر فحص الصورة. جرّب صورة أخرى.';
-        }
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        status.textContent = 'تعذر فتح الصورة. اختَر ملف صورة آخر.';
-      };
-      img.src = objectUrl;
+    function finish(raw) {
+      if (done) return;
+      let t;
+      try { t = targetFromQR(raw); } catch (e) { say(e.message, true); return false; }
+      done = true;
+      stopCamera();
+      document.getElementById('num').textContent = t.card;
+      document.getElementById('go').href = t.url;
+      document.getElementById('result').hidden = false;
+      say('تمت قراءة الكارت ✔');
+      setTimeout(() => location.assign(t.url), 1200);
+      return true;
     }
 
-    imageFile.addEventListener('change', () => {
-      const file = imageFile.files && imageFile.files[0];
-      if (file) decodeImageFile(file);
-    });
-
-    function scanFrame() {
-      if (!stream || busy) return;
-      if (video.readyState >= video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = window.jsQR && window.jsQR(image.data, image.width, image.height, {
-          inversionAttempts: 'attemptBoth'
-        });
-        if (code && code.data) {
-          busy = true;
-          try {
-            const target = targetFromQR(code.data);
-            status.textContent = 'تمت قراءة الكارت، جارٍ فتح رابط التفعيل…';
-            stopCamera();
-            window.location.assign(target);
-            return;
-          } catch (err) {
-            busy = false;
-            status.textContent = err.message || 'تعذرت قراءة الرمز.';
-          }
-        }
-      }
-      raf = requestAnimationFrame(scanFrame);
+    function stopCamera() {
+      scanning = false;
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = null; video.srcObject = null;
+      startBtn.disabled = false; stopBtn.disabled = true;
     }
 
-    start.addEventListener('click', async () => {
-      if (!window.jsQR) {
-        status.textContent = 'تعذر تحميل مكتبة قراءة QR. تحقق من اتصال الإنترنت ثم أعد المحاولة.';
-        return;
+    function tick() {
+      if (!scanning || done) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
+        const w = Math.min(video.videoWidth, 900), h = Math.round(video.videoHeight * w / video.videoWidth);
+        canvas.width = w; canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+        const img = ctx.getImageData(0, 0, w, h);
+        const code = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' });
+        if (code && code.data && finish(code.data)) return;
+      }
+      requestAnimationFrame(tick);
+    }
+
+    startBtn.addEventListener('click', async () => {
+      if (!window.jsQR) { say('تعذر تحميل قارئ QR، حدّث الصفحة وجرّب تاني.', true); return; }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        say('الكاميرا الحية مش متاحة في المتصفح ده. استخدم زر "تصوير الكارت بالكاميرا".', true); return;
       }
       try {
-        start.disabled = true;
-        status.textContent = 'جارٍ طلب إذن الكاميرا…';
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: { ideal: 'environment' } }
-        });
-        video.srcObject = stream;
-        await video.play();
-        stop.disabled = false;
-        status.textContent = 'وجّه الكاميرا إلى QR وثبّتها لحظة.';
-        raf = requestAnimationFrame(scanFrame);
-      } catch (err) {
-        stopCamera('لم أستطع فتح الكاميرا. اسمح للمتصفح باستخدامها وتأكد أنك تستخدم HTTPS.');
+        say('جارٍ تشغيل الكاميرا…');
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        video.srcObject = stream; await video.play();
+        scanning = true; startBtn.disabled = true; stopBtn.disabled = false;
+        say('وجّه الكاميرا ناحية الـ QR');
+        requestAnimationFrame(tick);
+      } catch (e) {
+        say('تعذر تشغيل الكاميرا. اسمح بالإذن، أو استخدم زر "تصوير الكارت بالكاميرا".', true);
       }
     });
-    stop.addEventListener('click', () => stopCamera('تم إيقاف الكاميرا.'));
-    window.addEventListener('pagehide', () => stopCamera());
-  })();
+    stopBtn.addEventListener('click', () => { stopCamera(); say('اتوقفت الكاميرا.'); });
+
+    // قراءة صورة: بنجرّب أكتر من مقاس لأن الصور الكبيرة أحياناً ما بتتقراش
+    function decodeImageFile(file) {
+      if (!file) return;
+      if (!window.jsQR) { say('تعذر تحميل قارئ QR، حدّث الصفحة وجرّب تاني.', true); return; }
+      say('جارٍ قراءة الصورة…');
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        let found = null;
+        for (const max of [1600, 1000, 640]) {
+          const s = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * s)), h = Math.max(1, Math.round(img.height * s));
+          canvas.width = w; canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+          const d = ctx.getImageData(0, 0, w, h);
+          found = jsQR(d.data, w, h, { inversionAttempts: 'attemptBoth' });
+          if (found) break;
+        }
+        URL.revokeObjectURL(url);
+        if (!found) { say('ما قدرتش أقرأ الـ QR. قرّب الكاميرا وخلّي الكود واضح وصوّر تاني.', true); return; }
+        finish(found.data);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); say('ما قدرتش أفتح الصورة.', true); };
+      img.src = url;
+    }
+    for (const id of ['imgShot', 'imageFile']) {
+      const el = document.getElementById(id);
+      el.addEventListener('change', () => { decodeImageFile(el.files && el.files[0]); el.value = ''; });
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      say('الكاميرا الحية مش متاحة هنا. استخدم "تصوير الكارت بالكاميرا".', true);
+    }
   </script>
 </body>
 </html>
