@@ -16,7 +16,7 @@ public class MainActivity extends Activity {
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
         webView.setWebViewClient(new WebViewClient());
-        webView.loadUrl("http://192.168.90.99/app/index.php?nologin=1");
+        webView.loadUrl("http://192.168.90.99/app/index.php");
     }
 
     @Override
